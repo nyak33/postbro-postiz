@@ -18,6 +18,7 @@ import { Plug } from '@gitroom/helpers/decorators/plug.decorator';
 import { Integration } from '@prisma/client';
 import { stripHtmlValidation } from '@gitroom/helpers/utils/strip.html.validation';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import { Tool } from '@gitroom/nestjs-libraries/integrations/tool.decorator';
 
 export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   identifier = 'threads';
@@ -26,6 +27,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   scopes = [
     'threads_basic',
     'threads_content_publish',
+    'threads_read_replies',
     'threads_manage_replies',
     'threads_manage_insights',
     // 'threads_profile_discovery',
@@ -819,6 +821,238 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     }
 
     return false;
+  }
+
+
+  @Tool({
+    description:
+      'PostBro: validate the connected Threads account and return its profile',
+    dataSchema: [],
+  })
+  async postbroProfile(
+    token: string,
+    _data: Record<string, never>,
+    internalId: string,
+    integration: Integration
+  ) {
+    const params = new URLSearchParams({
+      fields: 'id,username,name,threads_profile_picture_url,threads_biography',
+      access_token: token,
+    });
+
+    const profile = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${internalId}?${params.toString()}`
+      )
+    ).json();
+
+    return {
+      ...profile,
+      integrationId: integration.id,
+      integrationName: integration.name,
+      profile: integration.profile,
+    };
+  }
+
+  @Tool({
+    description: 'PostBro: list recent posts owned by the connected Threads account',
+    dataSchema: [
+      {
+        key: 'limit',
+        type: 'number',
+        description: 'Number of recent Threads posts to return, from 1 to 100',
+      },
+    ],
+  })
+  async postbroListThreads(
+    token: string,
+    data: { limit?: string | number },
+    _internalId: string
+  ) {
+    const limit = Math.min(Math.max(Number(data?.limit) || 20, 1), 100);
+    const params = new URLSearchParams({
+      fields:
+        'id,text,timestamp,permalink,shortcode,username,has_replies,is_quote_post',
+      limit: String(limit),
+      access_token: token,
+    });
+
+    const response = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/me/threads?${params.toString()}`
+      )
+    ).json();
+
+    return response?.data || [];
+  }
+
+  @Tool({
+    description: 'PostBro: get replies for a Threads post',
+    dataSchema: [
+      {
+        key: 'threadId',
+        type: 'string',
+        description: 'Threads post ID whose replies should be returned',
+      },
+    ],
+  })
+  async postbroGetReplies(
+    token: string,
+    data: { threadId: string }
+  ) {
+    const params = new URLSearchParams({
+      fields:
+        'id,text,timestamp,permalink,shortcode,username,has_replies,is_reply,is_reply_owned_by_me,root_post,replied_to',
+      reverse: 'false',
+      limit: '100',
+      access_token: token,
+    });
+
+    const response = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(
+          data.threadId
+        )}/replies?${params.toString()}`
+      )
+    ).json();
+
+    return response?.data || [];
+  }
+
+  @Tool({
+    description: 'PostBro: get the conversation around a Threads reply',
+    dataSchema: [
+      {
+        key: 'threadId',
+        type: 'string',
+        description: 'Threads reply ID whose conversation should be returned',
+      },
+    ],
+  })
+  async postbroGetConversation(
+    token: string,
+    data: { threadId: string }
+  ) {
+    const params = new URLSearchParams({
+      fields:
+        'id,text,timestamp,permalink,shortcode,username,has_replies,is_reply,is_reply_owned_by_me,root_post,replied_to',
+      reverse: 'false',
+      limit: '100',
+      access_token: token,
+    });
+
+    const response = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(
+          data.threadId
+        )}/conversation?${params.toString()}`
+      )
+    ).json();
+
+    return response?.data || [];
+  }
+
+  @Tool({
+    description: 'PostBro: publish a text reply to a specific Threads reply',
+    dataSchema: [
+      {
+        key: 'replyId',
+        type: 'string',
+        description: 'Threads reply ID to respond to',
+      },
+      {
+        key: 'text',
+        type: 'string',
+        description: 'Reply text, maximum 500 characters',
+      },
+    ],
+  })
+  async postbroRespondToReply(
+    token: string,
+    data: { replyId: string; text: string }
+  ) {
+    const params = new URLSearchParams({
+      media_type: 'TEXT',
+      text: data.text,
+      reply_to_id: data.replyId,
+      auto_publish_text: 'true',
+      access_token: token,
+    });
+
+    return (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/me/threads?${params.toString()}`,
+        { method: 'POST' }
+      )
+    ).json();
+  }
+
+  @Tool({
+    description: 'PostBro: hide or unhide a Threads reply',
+    dataSchema: [
+      {
+        key: 'replyId',
+        type: 'string',
+        description: 'Threads reply ID to manage',
+      },
+      {
+        key: 'hide',
+        type: 'boolean',
+        description: 'true to hide the reply, false to unhide it',
+      },
+    ],
+  })
+  async postbroManageReply(
+    token: string,
+    data: { replyId: string; hide: boolean | string }
+  ) {
+    const params = new URLSearchParams({
+      hide: String(this.assetBoolean(data.hide)),
+      access_token: token,
+    });
+
+    return (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(
+          data.replyId
+        )}/manage_reply?${params.toString()}`,
+        { method: 'POST' }
+      )
+    ).json();
+  }
+
+  @Tool({
+    description: 'PostBro: approve or ignore a pending Threads reply',
+    dataSchema: [
+      {
+        key: 'replyId',
+        type: 'string',
+        description: 'Pending Threads reply ID to manage',
+      },
+      {
+        key: 'approve',
+        type: 'boolean',
+        description: 'true to approve the reply, false to ignore it',
+      },
+    ],
+  })
+  async postbroManagePendingReply(
+    token: string,
+    data: { replyId: string; approve: boolean | string }
+  ) {
+    const params = new URLSearchParams({
+      approve: String(this.assetBoolean(data.approve)),
+      access_token: token,
+    });
+
+    return (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(
+          data.replyId
+        )}/manage_pending_reply?${params.toString()}`,
+        { method: 'POST' }
+      )
+    ).json();
   }
 
   async postAnalytics(
