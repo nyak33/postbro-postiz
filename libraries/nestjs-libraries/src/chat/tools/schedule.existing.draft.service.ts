@@ -25,24 +25,38 @@ export interface ValidatePostLike {
   tooLong: boolean;
 }
 
+export class WorkflowAlreadyStartedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowExecutionAlreadyStartedError';
+  }
+}
+
 /**
- * Minimal, injectable wrapper around the Temporal client used only for
- * scheduling workflows. In production it is bound to TemporalService;
- * tests bind a stub. start() must throw on failure.
+ * Result of a workflow start attempt. 'started' is the only success.
+ * 'uncertain' means the start call failed with a transport-level error and
+ * the workflow MAY have been accepted by the server — the caller must
+ * reconcile by querying workflow status instead of blindly rolling back.
  */
-export abstract class SchedulingWorkflowStarter {
-  abstract start(input: {
+export interface SchedulingWorkflowStarter {
+  start(input: {
     postId: string;
     orgId: string;
     taskQueue: string;
-  }): Promise<void>;
+  }): Promise<'started'>;
+  /**
+   * Best-effort status check used when start() threw with an ambiguous
+   * transport error. Returns 'running' | 'not-found' | 'unknown'.
+   */
+  describe(postId: string): Promise<'running' | 'not-found' | 'unknown'>;
 }
 
 /**
  * Pure, dependency-explicit service for the scheduleExistingDraftTool.
  * Deliberately does NOT reuse changePostStatus/changeDate (see checkpoint 2C):
  * the transition here is a single conditional UPDATE guarded on
- * state='DRAFT' AND organizationId, executed after content verification.
+ * state='DRAFT', organizationId AND exact approved content, so a concurrent
+ * edit between validation and the write invalidates the schedule.
  */
 @Injectable()
 export class ScheduleExistingDraftService {
@@ -63,6 +77,9 @@ export class ScheduleExistingDraftService {
   ): Promise<ScheduleExistingDraftResult> {
     const { orgId, postId, integrationId, approvalRef } = req;
 
+    // approvalRef is an AUDIT reference to the out-of-band approval (e.g.
+    // the Hermes approval ledger). It is required for traceability but is
+    // NOT server-side authorization — see tool description.
     if (!approvalRef || !approvalRef.trim()) {
       throw new BadRequestException(
         'An explicit scheduling approval reference is required'
@@ -108,8 +125,9 @@ export class ScheduleExistingDraftService {
       );
     }
 
-    // Content version check — a draft edited after approval must never
-    // be scheduled under the old approval.
+    // Content version pre-check (fast, clear error). The SAME equality is
+    // repeated atomically in the conditional update below — that one is the
+    // authoritative guard against concurrent edits.
     if (post.content !== req.expectedContent) {
       throw new BadRequestException(
         'Draft content has changed since approval. Re-approve the current content before scheduling.'
@@ -139,23 +157,23 @@ export class ScheduleExistingDraftService {
       }
     }
 
-    // Atomic, conditional DRAFT -> QUEUE transition. updateMany with a
-    // state='DRAFT' predicate: returns 1 to exactly one concurrent caller;
-    // everyone else gets 0 (idempotency + concurrency safety in the DB).
+    // Atomic, conditional DRAFT -> QUEUE transition guarded on org, DRAFT
+    // state AND exact approved content. Exactly one concurrent caller gets
+    // count=1; everyone else — including a caller racing a content edit —
+    // gets 0 and nothing changes.
     const updated = await this._postsRepository.conditionalScheduleDraft(
       orgId,
       postId,
-      publishDate.toDate()
+      publishDate.toDate(),
+      req.expectedContent
     );
     if (updated === 0) {
       throw new BadRequestException(
-        'Post is no longer a draft (already scheduled or modified by another request). No changes were made.'
+        'Post is no longer schedulable (already scheduled, or content changed concurrently). Re-fetch the draft and re-approve before retrying.'
       );
     }
 
-    // Persistence committed — start the scheduling workflow. If startup
-    // fails, reconcile by reverting the row to DRAFT so a broken schedule
-    // never sits in QUEUE without a workflow behind it.
+    // Persistence committed — start the scheduling workflow.
     try {
       await this._workflowStarter.start({
         postId,
@@ -163,9 +181,38 @@ export class ScheduleExistingDraftService {
         taskQueue: integration.providerIdentifier.split('-')[0].toLowerCase(),
       });
     } catch (err: any) {
-      await this._postsRepository.revertToDraft(orgId, postId);
+      // F4: a duplicate workflow id means a scheduling workflow for this
+      // post already exists — do NOT revert; the post is correctly QUEUE
+      // behind that workflow. Report it as a distinct, actionable state.
+      if (err?.name === 'WorkflowExecutionAlreadyStartedError') {
+        throw new BadRequestException(
+          `Post was scheduled, but a workflow for it already exists (id post_${postId}). The post stays QUEUE. If that workflow is stale, terminate it in Temporal and re-schedule — do NOT retry this call blindly.`
+        );
+      }
+
+      // Temporal ambiguity: a transport error can mean the workflow WAS
+      // accepted. Blindly reverting to DRAFT would strand a live workflow
+      // whose publish would then update a DRAFT post. Check status first.
+      const status = await this._workflowStarter.describe(postId);
+      if (status === 'running') {
+        // Workflow exists — the schedule is actually live. Report honestly.
+        return {
+          postId,
+          integrationId,
+          state: 'QUEUE',
+          publishDate: publishDate.toDate().toISOString(),
+        };
+      }
+      if (status === 'not-found') {
+        await this._postsRepository.revertToDraft(orgId, postId);
+        throw new BadRequestException(
+          `Workflow startup failed and no workflow exists (${err?.message || 'unknown'}). The post was reverted to DRAFT — safe to retry.`
+        );
+      }
+      // 'unknown' — cannot determine. Fail safe: leave the post QUEUE and
+      // tell the operator exactly what to check, no misleading retry.
       throw new BadRequestException(
-        `Schedule saved but workflow startup failed (${err?.message || 'unknown'}). The post was reverted to DRAFT — safe to retry.`
+        `Workflow startup failed (${err?.message || 'unknown'}) and workflow status could not be determined. The post was left in QUEUE to avoid stranding a possibly-live workflow. Check workflow post_${postId} in Temporal before retrying or reverting manually.`
       );
     }
 

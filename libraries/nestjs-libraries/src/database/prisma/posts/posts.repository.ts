@@ -483,12 +483,21 @@ export class PostsRepository {
    * concurrency: exactly one caller gets count=1; everyone else gets 0.
    * Never touches PUBLISHED posts (predicate excludes them).
    */
-  async conditionalScheduleDraft(orgId: string, id: string, date: Date) {
+  async conditionalScheduleDraft(
+    orgId: string,
+    id: string,
+    date: Date,
+    expectedContent?: string
+  ) {
     const result = await this._post.model.post.updateMany({
       where: {
         id,
         organizationId: orgId,
         state: 'DRAFT',
+        // F10: a concurrent content edit between validation and this write
+        // invalidates the schedule (count=0) instead of queueing new text
+        // under an old approval.
+        ...(expectedContent !== undefined ? { content: expectedContent } : {}),
       },
       data: {
         state: 'QUEUE',

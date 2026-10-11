@@ -6,6 +6,7 @@ import { checkAuth } from '@gitroom/nestjs-libraries/chat/auth.context';
 import {
   ScheduleExistingDraftService,
   SchedulingWorkflowStarter,
+  WorkflowAlreadyStartedError,
 } from '@gitroom/nestjs-libraries/chat/tools/schedule.existing.draft.service';
 import { PostsRepository } from '@gitroom/nestjs-libraries/database/prisma/posts/posts.repository';
 import { IntegrationService } from '@gitroom/nestjs-libraries/database/prisma/integrations/integration.service';
@@ -34,20 +35,54 @@ export class ScheduleExistingDraftTool implements AgentToolInterface {
   private buildService() {
     const temporal = this._temporalService;
     const starter: SchedulingWorkflowStarter = {
-      async start({ postId, orgId }) {
-        await temporal.client.getRawClient()?.workflow.start('postWorkflowV112', {
-          workflowId: `post_${postId}`,
-          taskQueue: 'main',
-          // never spawn a second workflow for the same post — a repeat
-          // call attaches to / replaces via deterministic workflowId only
-          // after the DB transition already guaranteed single ownership
-          workflowIdConflictPolicy: 'FAIL',
-          args: [{ taskQueue: 'main', postId, organizationId: orgId }],
-          typedSearchAttributes: new TypedSearchAttributes([
-            { key: postIdSearchParam, value: postId },
-            { key: organizationId, value: orgId },
-          ]),
-        });
+      async start({ postId, orgId, taskQueue }) {
+        // F5: never silently no-op. getRawClient() may be undefined when
+        // Temporal isn't connected — optional chaining would make start()
+        // resolve without creating anything.
+        const raw = temporal.client.getRawClient();
+        if (!raw) {
+          throw new Error(
+            'Temporal client is not available — scheduling workflow cannot be started'
+          );
+        }
+        // Mirrors PostsService.startWorkflow: the workflow itself always
+        // runs on the 'main' task queue; the provider-specific queue is
+        // passed in args[0].taskQueue and used by postWorkflowV112 to route
+        // its ACTIVITIES (workers register per provider prefix in
+        // temporal.module.ts).
+        try {
+          await raw.workflow.start('postWorkflowV112', {
+            workflowId: `post_${postId}`,
+            taskQueue: 'main',
+            // deterministic id: a duplicate start throws
+            // WorkflowExecutionAlreadyStartedError (mapped in the service)
+            workflowIdConflictPolicy: 'FAIL',
+            args: [{ taskQueue, postId, organizationId: orgId }],
+            typedSearchAttributes: new TypedSearchAttributes([
+              { key: postIdSearchParam, value: postId },
+              { key: organizationId, value: orgId },
+            ]),
+          });
+        } catch (err: any) {
+          if (err?.name === 'WorkflowExecutionAlreadyStartedError') {
+            throw new WorkflowAlreadyStartedError(err.message);
+          }
+          throw err;
+        }
+        return 'started' as const;
+      },
+      async describe(postId) {
+        try {
+          const raw = temporal.client.getRawClient();
+          if (!raw) return 'unknown';
+          const handle = raw.workflow.getHandle(`post_${postId}`);
+          const desc = await handle.describe();
+          return desc.status.name === 'RUNNING' ? 'running' : 'not-found';
+        } catch (err: any) {
+          // WorkflowNotFoundError → definitely not accepted
+          if (err?.name === 'WorkflowNotFoundError') return 'not-found';
+          return 'unknown';
+        }
       },
     };
 
@@ -87,10 +122,11 @@ Use this only after explicit user approval for a specific date/time — saving a
 
 Hard guarantees:
 - Only works on posts currently in DRAFT state. PUBLISHED or already-scheduled (QUEUE) posts are rejected.
-- The draft content must match the approved version exactly; an edited draft is rejected and needs re-approval.
-- Requires a future UTC publish date and an approval reference from the conversation.
-- The transition is atomic and safe to retry: a repeated call reports "no longer a draft" instead of double-scheduling.
-- If the scheduling workflow fails to start, the post is reverted to DRAFT and the call reports an error — safe to retry.
+- The draft content must match the approved version exactly, checked atomically with the scheduling update; an edited draft is rejected and needs re-approval.
+- Requires a future UTC publish date.
+- approvalRef is an AUDIT reference to an out-of-band approval (e.g. an approval ledger id), required for traceability. It is NOT verified by the server and is NOT an authorization mechanism — access control is the MCP API key.
+- The transition is atomic and safe to retry: a repeated call reports the post is no longer schedulable instead of double-scheduling.
+- If workflow startup fails, the workflow status is checked before any rollback: confirmed-absent → post reverted to DRAFT (safe to retry); status indeterminable → post left in QUEUE with manual-check instructions (never blindly rolled back).
 
 Find drafts first with postsListTool. To change provider settings before scheduling, use postSettingsTool.
 `,
