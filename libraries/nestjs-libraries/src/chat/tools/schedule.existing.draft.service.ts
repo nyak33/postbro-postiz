@@ -1,6 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
 import { PostsRepository } from '@gitroom/nestjs-libraries/database/prisma/posts/posts.repository';
+
+dayjs.extend(utc);
 
 export interface ScheduleExistingDraftRequest {
   orgId: string;
@@ -48,7 +51,9 @@ export interface SchedulingWorkflowStarter {
    * Best-effort status check used when start() threw with an ambiguous
    * transport error. Returns 'running' | 'not-found' | 'unknown'.
    */
-  describe(postId: string): Promise<'running' | 'not-found' | 'unknown'>;
+  describe(postId: string): Promise<
+    'running' | 'exists-not-running' | 'not-found' | 'unknown'
+  >;
 }
 
 /**
@@ -86,10 +91,28 @@ export class ScheduleExistingDraftService {
       );
     }
 
-    const publishDate = dayjs(req.publishDateUtc);
-    if (!publishDate.isValid()) {
+    // F12: strict UTC ISO 8601 with explicit Z suffix — dayjs alone accepts
+    // timezone-less and malformed input and silently reinterprets it.
+    if (
+      typeof req.publishDateUtc !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(req.publishDateUtc)
+    ) {
       throw new BadRequestException(
-        `Invalid publish date: ${req.publishDateUtc} (UTC ISO 8601 required)`
+        `Invalid publish date: ${req.publishDateUtc} (strict UTC ISO 8601 with Z suffix required, e.g. 2026-10-12T01:00:00Z)`
+      );
+    }
+    const publishDate = dayjs(req.publishDateUtc).utc();
+    const canonical = publishDate.isValid()
+      ? publishDate.format('YYYY-MM-DDTHH:mm:ss.SSS[Z]')
+      : null;
+    const inputCanonical = req.publishDateUtc.endsWith('Z')
+      ? req.publishDateUtc.includes('.')
+        ? req.publishDateUtc
+        : req.publishDateUtc.replace('Z', '.000Z')
+      : req.publishDateUtc;
+    if (!publishDate.isValid() || canonical !== inputCanonical) {
+      throw new BadRequestException(
+        `Invalid publish date: ${req.publishDateUtc} (not a real calendar date)`
       );
     }
     if (!publishDate.isAfter(dayjs())) {
@@ -204,13 +227,15 @@ export class ScheduleExistingDraftService {
         };
       }
       if (status === 'not-found') {
+        // F11: only a genuine WorkflowNotFoundError justifies a revert.
         await this._postsRepository.revertToDraft(orgId, postId);
         throw new BadRequestException(
           `Workflow startup failed and no workflow exists (${err?.message || 'unknown'}). The post was reverted to DRAFT — safe to retry.`
         );
       }
-      // 'unknown' — cannot determine. Fail safe: leave the post QUEUE and
-      // tell the operator exactly what to check, no misleading retry.
+      // 'exists-not-running' or 'unknown' — the workflow may have run or
+      // state cannot be determined. Fail safe: never automatically revert;
+      // leave the post QUEUE and require a manual check.
       throw new BadRequestException(
         `Workflow startup failed (${err?.message || 'unknown'}) and workflow status could not be determined. The post was left in QUEUE to avoid stranding a possibly-live workflow. Check workflow post_${postId} in Temporal before retrying or reverting manually.`
       );

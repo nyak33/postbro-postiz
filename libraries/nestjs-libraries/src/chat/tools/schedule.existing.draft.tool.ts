@@ -77,9 +77,13 @@ export class ScheduleExistingDraftTool implements AgentToolInterface {
           if (!raw) return 'unknown';
           const handle = raw.workflow.getHandle(`post_${postId}`);
           const desc = await handle.describe();
-          return desc.status.name === 'RUNNING' ? 'running' : 'not-found';
+          // F11: the workflow EXISTS regardless of its run status. Only a
+          // genuine WorkflowNotFoundError (catch below) means it was never
+          // accepted. COMPLETED/FAILED/CANCELLED/TERMINATED/TIMED_OUT all
+          // mean the workflow ran — never treat as absent (a blind revert
+          // could then strand real publish side-effects or history).
+          return desc.status.name === 'RUNNING' ? 'running' : 'exists-not-running';
         } catch (err: any) {
-          // WorkflowNotFoundError → definitely not accepted
           if (err?.name === 'WorkflowNotFoundError') return 'not-found';
           return 'unknown';
         }

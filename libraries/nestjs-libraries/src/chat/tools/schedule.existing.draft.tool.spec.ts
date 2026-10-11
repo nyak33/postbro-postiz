@@ -30,7 +30,7 @@ const makeService = (opts: {
   integration?: any;
   conditionalResult?: number;
   workflowError?: Error | null;
-  describeResult?: 'running' | 'not-found' | 'unknown';
+  describeResult?: 'running' | 'exists-not-running' | 'not-found' | 'unknown';
   validateResult?: any;
 }) => {
   const calls: any = { start: [], revert: [], describe: [] };
@@ -178,6 +178,47 @@ describe('ScheduleExistingDraftService', () => {
     ).rejects.toThrow(/invalid/i);
   });
 
+  it('F12: rejects timezone-less dates (no Z suffix)', async () => {
+    const { service } = makeService({});
+    await expect(
+      service.schedule(validInput({ publishDateUtc: '2099-01-01T09:00:00' }))
+    ).rejects.toThrow(/Z suffix/i);
+  });
+
+  it('F12: rejects offset timezones (+08:00 instead of Z)', async () => {
+    const { service } = makeService({});
+    await expect(
+      service.schedule(
+        validInput({ publishDateUtc: '2099-01-01T09:00:00+08:00' })
+      )
+    ).rejects.toThrow(/Z suffix/i);
+  });
+
+  it('F12: rejects date-only and space-separated formats', async () => {
+    const { service } = makeService({});
+    await expect(
+      service.schedule(validInput({ publishDateUtc: '2099-01-01' }))
+    ).rejects.toThrow(/Z suffix/i);
+    await expect(
+      service.schedule(validInput({ publishDateUtc: '2099-01-01 09:00:00Z' }))
+    ).rejects.toThrow(/Z suffix/i);
+  });
+
+  it('F12: rejects real-looking but invalid calendar dates', async () => {
+    const { service } = makeService({});
+    await expect(
+      service.schedule(validInput({ publishDateUtc: '2099-02-30T09:00:00Z' }))
+    ).rejects.toThrow(/not a real calendar date/i);
+  });
+
+  it('F12: accepts strict UTC with Z suffix (milliseconds allowed)', async () => {
+    const { service } = makeService({});
+    const res = await service.schedule(
+      validInput({ publishDateUtc: '2099-01-01T09:00:00.000Z' })
+    );
+    expect(res.state).toBe('QUEUE');
+  });
+
   it('rejects content failing platform validation (too long)', async () => {
     const { service, repository } = makeService({
       validateResult: {
@@ -267,6 +308,17 @@ describe('ScheduleExistingDraftService', () => {
     expect(calls.revert.length).toBe(0);
   });
 
+  it('F11: workflow EXISTS but not running (COMPLETED/FAILED/TERMINATED/TIMED_OUT) → never reverted, manual check required', async () => {
+    const { service, calls } = makeService({
+      workflowError: new Error('transport error'),
+      describeResult: 'exists-not-running',
+    });
+    await expect(service.schedule(validInput())).rejects.toThrow(
+      /could not be determined.*left in QUEUE/i
+    );
+    expect(calls.revert.length).toBe(0);
+  });
+
   it('missing approval reference is rejected', async () => {
     const { service, repository } = makeService({});
     await expect(
@@ -339,7 +391,7 @@ describe('ScheduleExistingDraftTool real starter adapter', () => {
     ).rejects.toThrow(WorkflowAlreadyStartedError);
   });
 
-  it('describe: RUNNING → running, WorkflowNotFoundError → not-found, other errors → unknown, no client → unknown', async () => {
+  it('describe: RUNNING → running, non-running statuses → exists-not-running, WorkflowNotFoundError → not-found, other errors → unknown, no client → unknown', async () => {
     const running = makeTool({
       workflow: {
         getHandle: () => ({
@@ -348,6 +400,24 @@ describe('ScheduleExistingDraftTool real starter adapter', () => {
       },
     });
     expect(await running.describe('p1')).toBe('running');
+
+    // F11: every non-running status still means the workflow EXISTS
+    for (const status of [
+      'COMPLETED',
+      'FAILED',
+      'CANCELLED',
+      'TERMINATED',
+      'TIMED_OUT',
+    ]) {
+      const t = makeTool({
+        workflow: {
+          getHandle: () => ({
+            describe: () => Promise.resolve({ status: { name: status } }),
+          }),
+        },
+      });
+      expect(await t.describe('p1')).toBe('exists-not-running');
+    }
 
     const nfErr = new Error('not found');
     nfErr.name = 'WorkflowNotFoundError';
