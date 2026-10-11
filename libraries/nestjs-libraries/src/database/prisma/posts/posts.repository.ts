@@ -477,6 +477,49 @@ export class PostsRepository {
     });
   }
 
+  /**
+   * Atomic, conditional DRAFT -> QUEUE transition with a new publish date.
+   * The state='DRAFT' predicate in the WHERE clause makes this safe under
+   * concurrency: exactly one caller gets count=1; everyone else gets 0.
+   * Never touches PUBLISHED posts (predicate excludes them).
+   */
+  async conditionalScheduleDraft(orgId: string, id: string, date: Date) {
+    const result = await this._post.model.post.updateMany({
+      where: {
+        id,
+        organizationId: orgId,
+        state: 'DRAFT',
+      },
+      data: {
+        state: 'QUEUE',
+        publishDate: date,
+        releaseId: null,
+        releaseURL: null,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Crash reconciliation: revert a post to DRAFT only if it is currently
+   * QUEUE (i.e. a schedule we just persisted whose workflow failed to
+   * start). Conditional so it can never clobber a post someone else has
+   * since legitimately scheduled or published.
+   */
+  async revertToDraft(orgId: string, id: string) {
+    const result = await this._post.model.post.updateMany({
+      where: {
+        id,
+        organizationId: orgId,
+        state: 'QUEUE',
+      },
+      data: {
+        state: 'DRAFT',
+      },
+    });
+    return result.count;
+  }
+
   async changeState(id: string, state: State, err?: any, body?: any) {
     const update = await this._post.model.post.update({
       where: {
