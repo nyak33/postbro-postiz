@@ -1,0 +1,60 @@
+name: Build PostBro staging image
+
+on:
+  push:
+    branches:
+      - feat/threads-topic-tag
+    paths:
+      - '.github/workflows/postbro-staging-image.yml'
+      - 'apps/**'
+      - 'libraries/**'
+      - 'var/docker/**'
+      - 'Dockerfile.dev'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-staging-image:
+    if: github.repository == 'nyak33/postbro-postiz'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout the exact feature commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to our GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push isolated AMD64 image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.dev
+          platforms: linux/amd64
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            NEXT_PUBLIC_VERSION=postbro-topic-${{ github.sha }}
+          tags: ghcr.io/nyak33/postbro-postiz:topic-${{ github.sha }}
+
+      - name: Report immutable staging image
+        run: |
+          echo "Image: ghcr.io/nyak33/postbro-postiz@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Production was not deployed or modified." >> "$GITHUB_STEP_SUMMARY"
