@@ -269,7 +269,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     message: string,
     isCarouselItem = false,
     replyToId?: string,
-    madeWithAi = false
+    madeWithAi = false,
+    topicTag?: string
   ): Promise<string> {
     const mediaType = hasExtension(media.path, 'mp4')
       ? 'video_url'
@@ -282,6 +283,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       // is_made_with_ai is rejected on carousel items, it goes on the carousel
       // container instead
       ...(madeWithAi && !isCarouselItem ? { is_made_with_ai: 'true' } : {}),
+      ...(topicTag && !isCarouselItem ? { topic_tag: topicTag } : {}),
       media_type: mediaType === 'video_url' ? 'VIDEO' : 'IMAGE',
       text: message,
       access_token: accessToken,
@@ -305,7 +307,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     media: { path: string }[],
     message: string,
     replyToId?: string,
-    madeWithAi = false
+    madeWithAi = false,
+    topicTag?: string
   ): Promise<string> {
     // Create each media item
     const mediaIds = [];
@@ -332,6 +335,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       children: mediaIds.join(','),
       ...(replyToId ? { reply_to_id: replyToId } : {}),
       ...(madeWithAi ? { is_made_with_ai: 'true' } : {}),
+      ...(topicTag ? { topic_tag: topicTag } : {}),
       access_token: accessToken,
     });
 
@@ -353,7 +357,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     message: string,
     replyToId?: string,
     quoteId?: string,
-    madeWithAi = false
+    madeWithAi = false,
+    topicTag?: string
   ): Promise<string> {
     const form = new FormData();
     form.append('media_type', 'TEXT');
@@ -362,6 +367,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
 
     if (madeWithAi) {
       form.append('is_made_with_ai', 'true');
+    }
+
+    if (topicTag) {
+      form.append('topic_tag', topicTag);
     }
 
     if (replyToId) {
@@ -477,6 +486,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       active_thread_finisher: boolean;
       thread_finisher: string;
       made_with_ai?: boolean;
+      topic_tag?: string;
     }>[],
     integration: Integration
   ): Promise<PostResponse[]> {
@@ -486,6 +496,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
 
     const [firstPost] = postDetails;
     const madeWithAi = this.assetBoolean(firstPost.settings?.made_with_ai);
+    const topicTag = firstPost.settings?.topic_tag?.trim() || undefined;
 
     // Carousels: only create the child containers here, the carousel container
     // itself is created by finalizePost once the children are processed.
@@ -514,6 +525,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
             childIds,
             message: firstPost.message,
             ...(madeWithAi ? { madeWithAi } : {}),
+            ...(topicTag ? { topicTag } : {}),
           },
         },
       ];
@@ -529,7 +541,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
             firstPost.message,
             undefined,
             undefined,
-            madeWithAi
+            madeWithAi,
+            topicTag
           )
         : await this.createSingleMediaContent(
             userId,
@@ -538,7 +551,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
             firstPost.message,
             false,
             undefined,
-            madeWithAi
+            madeWithAi,
+            topicTag
           );
 
     return [
@@ -560,6 +574,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       containerId?: string;
       message?: string;
       madeWithAi?: boolean;
+      topicTag?: string;
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
@@ -606,6 +621,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       containerId?: string;
       message?: string;
       madeWithAi?: boolean;
+      topicTag?: string;
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
@@ -618,6 +634,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
         media_type: 'CAROUSEL',
         children: (pendingData.childIds || []).join(','),
         ...(pendingData.madeWithAi ? { is_made_with_ai: 'true' } : {}),
+        ...(pendingData.topicTag ? { topic_tag: pendingData.topicTag } : {}),
         access_token: accessToken,
       });
 
@@ -661,6 +678,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       active_thread_finisher: boolean;
       thread_finisher: string;
       made_with_ai?: boolean;
+      topic_tag?: string;
     }>[],
     integration: Integration
   ): Promise<PostResponse[]> {
@@ -735,6 +753,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       active_thread_finisher: boolean;
       thread_finisher: string;
       made_with_ai?: boolean;
+      topic_tag?: string;
     }>[],
     integration: Integration
   ): Promise<PostResponse[]> {
