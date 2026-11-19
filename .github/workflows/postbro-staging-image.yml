@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/threads-topic-tag
+      - ops/threads-topic-staging
     paths:
       - '.github/workflows/postbro-staging-image.yml'
       - 'apps/**'
@@ -51,6 +52,7 @@ jobs:
           sbom: false
           build-args: |
             NEXT_PUBLIC_VERSION=postbro-topic-${{ github.sha }}
+            NEXT_PUBLIC_BACKEND_URL=https://postiz-staging.syaqirshaq.online/api
           tags: ghcr.io/nyak33/postbro-postiz:topic-${{ github.sha }}
 
       - name: Report immutable staging image
