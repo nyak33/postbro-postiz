@@ -16,6 +16,7 @@ import { CopyClient } from '@gitroom/frontend/components/preview/copy.client';
 import { getT } from '@gitroom/react/translation/get.translation.service.backend';
 import { RenderPreviewDateClient } from '@gitroom/frontend/components/preview/render.preview.date.client';
 import { CreationMethodBadge } from '@gitroom/frontend/components/launches/creation.method.badge';
+import { ThreadsTopicTagPreview } from '@gitroom/frontend/components/launches/threads.topic.tag.preview';
 
 dayjs.extend(utc);
 export const metadata: Metadata = {
@@ -41,6 +42,20 @@ export default async function Auth(
 
   const post = await (await internalFetch(`/public/posts/${id}`)).json();
   const t = await getT();
+  // The post is already stored; read the Threads topic from provider settings.
+  // Older posts may not have this setting, so never let a preview fail on it.
+  let threadsTopicTag: string | undefined;
+  if (post?.[0]?.integration?.providerIdentifier === 'threads') {
+    try {
+      const raw = post[0].settings;
+      const settings = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw;
+      if (typeof settings?.topic_tag === 'string') {
+        threadsTopicTag = settings.topic_tag;
+      }
+    } catch {
+      // Legacy or invalid settings should not prevent a preview.
+    }
+  }
   if (!post.length) {
     return (
       <div className="text-newTextColor fixed start-0 top-0 w-full h-full flex justify-center items-center text-[20px]">
@@ -154,6 +169,9 @@ export default async function Auth(
                         postId={p.id}
                         html={sanitizePostContent(p.content)}
                       />
+                      {index === 0 && (
+                        <ThreadsTopicTagPreview topicTag={threadsTopicTag} />
+                      )}
                       {!!JSON.parse(p?.image || '[]').length && (
                         <div className="flex w-full gap-[10px]">
                           {JSON.parse(p?.image || '[]').map((p: any) => (
