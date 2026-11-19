@@ -1,0 +1,117 @@
+# PostBro / Postiz Threads Topic Tag isolated staging.
+# Run ONLY with docker --context rootless compose; never connect to production data.
+name: postiz-topic-staging
+
+services:
+  postiz:
+    image: ghcr.io/nyak33/postbro-postiz@sha256:4e43ff23be6f23d65b21505716a96e78a72e3f7afa7c747b90a98c656c445585
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5007:5000"
+      - "127.0.0.1:5008:3000"
+    environment:
+      MAIN_URL: http://localhost:5007
+      FRONTEND_URL: http://localhost:5007
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:5007/api
+      BACKEND_INTERNAL_URL: http://127.0.0.1:3000
+      JWT_SECRET: ${JWT_SECRET:?Missing JWT_SECRET}
+      DATABASE_URL: postgresql://postiz:${POSTIZ_DB_PASSWORD:?Missing POSTIZ_DB_PASSWORD}@postgres:5432/postiz_staging
+      REDIS_URL: redis://redis:6379
+      TEMPORAL_ADDRESS: temporal:7233
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: "false"
+      NX_ADD_PLUGINS: "false"
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - postiz_config:/config
+      - postiz_uploads:/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postiz
+      POSTGRES_PASSWORD: ${POSTIZ_DB_PASSWORD:?Missing POSTIZ_DB_PASSWORD}
+      POSTGRES_DB: postiz_staging
+    volumes:
+      - postiz_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postiz -d postiz_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7.2
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - postiz_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  temporal-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?Missing TEMPORAL_DB_PASSWORD}
+    volumes:
+      - temporal_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  elasticsearch:
+    image: elasticsearch:7.17.27
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+    mem_limit: 1024m
+    # No public ports; staging search index is disposable.
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?Missing TEMPORAL_DB_PASSWORD}
+      POSTGRES_SEEDS: temporal-postgres
+      ENABLE_ES: "true"
+      ES_SEEDS: elasticsearch
+      ES_VERSION: v7
+      TEMPORAL_NAMESPACE: default
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_started
+
+volumes:
+  postiz_config:
+  postiz_uploads:
+  postiz_pgdata:
+  postiz_redis:
+  temporal_pgdata:
