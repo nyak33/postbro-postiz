@@ -1,0 +1,61 @@
+name: Build PostBro production candidate
+
+on:
+  push:
+    branches:
+      - release/threads-topic-tag-prod
+    paths:
+      - '.github/workflows/postbro-production-candidate.yml'
+      - 'apps/**'
+      - 'libraries/**'
+      - 'var/docker/**'
+      - 'Dockerfile.dev'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-production-candidate:
+    if: github.repository == 'nyak33/postbro-postiz'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout production candidate source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to our GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push AMD64 production candidate
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.dev
+          platforms: linux/amd64
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            NEXT_PUBLIC_VERSION=postbro-prod-topic-${{ github.sha }}
+            NEXT_PUBLIC_BACKEND_URL=https://postiz.syaqirshaq.online/api
+          tags: ghcr.io/nyak33/postbro-postiz:prod-candidate-${{ github.sha }}
+
+      - name: Report immutable production candidate image
+        run: |
+          echo "Image: ghcr.io/nyak33/postbro-postiz@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Candidate built only. Production and staging containers were not deployed or modified." >> "$GITHUB_STEP_SUMMARY"
