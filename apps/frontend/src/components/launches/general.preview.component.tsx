@@ -111,6 +111,9 @@ export const GeneralPreviewComponent: FC<{
                     ? ''
                     : integration?.display || '@username'}
                 </div>
+                {index === 0 && current !== 'global' && (
+                  <ThreadsTopicTagPreview topicTag={props.topicTag} />
+                )}
               </div>
               <div
                 dir="auto"
@@ -119,7 +122,6 @@ export const GeneralPreviewComponent: FC<{
                   __html: value.text,
                 }}
               />
-              {index === 0 && <ThreadsTopicTagPreview topicTag={props.topicTag} />}
               {!!value?.images?.length && (
                 <div
                   className={clsx(

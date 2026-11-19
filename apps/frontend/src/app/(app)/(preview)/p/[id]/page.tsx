@@ -150,13 +150,16 @@ export default async function Auth(
                     </div>
                   </div>
                   <div className="flex-1 flex flex-col gap-[8px] min-w-0">
-                    <div className="flex items-center gap-[8px]">
+                    <div className="flex flex-wrap items-center gap-[8px]">
                       <h2 className="text-[14px] font-[600]">
                         {post[0].integration.name}
                       </h2>
                       <span className="text-[14px] text-textItemBlur">
                         @{post[0].integration.profile}
                       </span>
+                      {index === 0 && (
+                        <ThreadsTopicTagPreview topicTag={threadsTopicTag} />
+                      )}
                       {index === 0 && (
                         <CreationMethodBadge
                           creationMethod={p.creationMethod}
@@ -169,9 +172,6 @@ export default async function Auth(
                         postId={p.id}
                         html={sanitizePostContent(p.content)}
                       />
-                      {index === 0 && (
-                        <ThreadsTopicTagPreview topicTag={threadsTopicTag} />
-                      )}
                       {!!JSON.parse(p?.image || '[]').length && (
                         <div className="flex w-full gap-[10px]">
                           {JSON.parse(p?.image || '[]').map((p: any) => (
