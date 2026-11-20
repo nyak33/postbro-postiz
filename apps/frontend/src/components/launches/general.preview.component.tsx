@@ -7,9 +7,11 @@ import { textSlicer } from '@gitroom/helpers/utils/count.length';
 import { PlatformIcon } from '@gitroom/frontend/components/ui/platform.icon.component';
 import { useLaunchStore } from '@gitroom/frontend/components/new-launch/store';
 import { stripHtmlValidation } from '@gitroom/helpers/utils/strip.html.validation';
+import { ThreadsTopicTagPreview } from '@gitroom/frontend/components/launches/threads.topic.tag.preview';
 
 export const GeneralPreviewComponent: FC<{
   maximumCharacters?: number;
+  topicTag?: string;
 }> = (props) => {
   const { value: topValue, integration } = useIntegration();
   const current = useLaunchStore((state) => state.current);
@@ -109,6 +111,9 @@ export const GeneralPreviewComponent: FC<{
                     ? ''
                     : integration?.display || '@username'}
                 </div>
+                {index === 0 && current !== 'global' && (
+                  <ThreadsTopicTagPreview topicTag={props.topicTag} />
+                )}
               </div>
               <div
                 dir="auto"
