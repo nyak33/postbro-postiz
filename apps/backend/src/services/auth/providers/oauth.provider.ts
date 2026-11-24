@@ -66,8 +66,7 @@ export class OauthProvider extends AuthProviderAbstract {
     }
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: clientId,
-      client_secret: clientSecret,
+      ...(pkceEnabled ? {} : { client_id: clientId, client_secret: clientSecret }),
       code,
       redirect_uri: `${frontendUrl}/settings`,
     });
@@ -77,6 +76,9 @@ export class OauthProvider extends AuthProviderAbstract {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
+        ...(pkceEnabled ? {
+          Authorization: 'Basic ' + Buffer.from(clientId + ':' + clientSecret, 'utf8').toString('base64'),
+        } : {}),
       },
       body,
     });
