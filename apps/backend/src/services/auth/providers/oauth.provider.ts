@@ -2,6 +2,7 @@ import {
   AuthProvider,
   AuthProviderAbstract,
 } from '@gitroom/backend/services/auth/providers.interface';
+import { isGenericOAuthPkceEnabled, isValidOAuthPkceVerifier } from './oauth.pkce';
 
 @AuthProvider({ provider: 'GENERIC' })
 export class OauthProvider extends AuthProviderAbstract {
@@ -36,7 +37,7 @@ export class OauthProvider extends AuthProviderAbstract {
     };
   }
 
-  generateLink(query?: { state?: string }): string {
+  generateLink(query?: { state?: string; codeChallenge?: string }): string {
     const { authUrl, clientId, frontendUrl } = this.getConfig();
     const params = new URLSearchParams({
       client_id: clientId,
@@ -46,32 +47,49 @@ export class OauthProvider extends AuthProviderAbstract {
       redirect_uri: `${frontendUrl}/settings`,
     });
 
+    if (isGenericOAuthPkceEnabled('GENERIC')) {
+      if (!query?.codeChallenge || !/^[A-Za-z0-9_-]{43}$/.test(query.codeChallenge)) {
+        throw new Error('Generic OAuth PKCE challenge is required');
+      }
+      params.set('code_challenge', query.codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
+
     return `${authUrl}?${params.toString()}`;
   }
 
-  async getToken(code: string, _redirectUri?: string): Promise<string> {
+  async getToken(code: string, _redirectUri?: string, codeVerifier?: string): Promise<string> {
     const { tokenUrl, clientId, clientSecret, frontendUrl } = this.getConfig();
+    const pkceEnabled = isGenericOAuthPkceEnabled('GENERIC');
+    if (pkceEnabled && !isValidOAuthPkceVerifier(codeVerifier)) {
+      throw new Error('Generic OAuth PKCE verifier is missing or invalid');
+    }
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: `${frontendUrl}/settings`,
+    });
+    if (pkceEnabled) body.set('code_verifier', codeVerifier!);
     const response = await fetch(`${tokenUrl}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: clientId,
-        client_secret: clientSecret,
-        code,
-        redirect_uri: `${frontendUrl}/settings`,
-      }),
+      body,
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Token request failed: ${error}`);
+      // OAuth errors can contain sensitive data; never include upstream bodies in logs.
+      throw new Error('Generic OAuth token exchange failed');
     }
 
     const { access_token } = await response.json();
+    if (typeof access_token !== 'string' || !access_token) {
+      throw new Error('Generic OAuth token response invalid');
+    }
     return access_token;
   }
 
@@ -85,11 +103,16 @@ export class OauthProvider extends AuthProviderAbstract {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`User info request failed: ${error}`);
+      throw new Error('Generic OAuth userinfo request failed');
     }
 
-    const { email, sub: id } = await response.json();
+    const { email, sub: id, email_verified } = await response.json();
+    if (typeof email !== 'string' || !email || typeof id !== 'string' || !id) {
+      throw new Error('Generic OAuth userinfo response invalid');
+    }
+    if (isGenericOAuthPkceEnabled('GENERIC') && email_verified !== true) {
+      throw new Error('Generic OAuth requires a verified email identity');
+    }
     return { email, id };
   }
 }
