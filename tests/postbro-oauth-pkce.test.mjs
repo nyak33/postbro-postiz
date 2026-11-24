@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   createOAuthPkcePair,
   isGenericOAuthPkceEnabled,
+  isValidOAuthPkceSession,
   isValidOAuthPkceVerifier
 } from '../apps/backend/src/services/auth/providers/oauth.pkce.ts';
 
@@ -13,6 +14,16 @@ test('PKCE is disabled by default, enabled for GENERIC only', () => {
   assert.equal(isGenericOAuthPkceEnabled('GENERIC', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), true);
   assert.equal(isGenericOAuthPkceEnabled('GOOGLE', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), false);
   assert.equal(isGenericOAuthPkceEnabled('LOCAL', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), false);
+});
+
+test('validates state, verifier and cookie binding together', () => {
+  const verifier = createOAuthPkcePair().verifier;
+  const state = 'login-' + 'a'.repeat(23);
+  assert.equal(isValidOAuthPkceSession(state, state, verifier), true);
+  assert.equal(isValidOAuthPkceSession(state, 'login-' + 'b'.repeat(23), verifier), false);
+  assert.equal(isValidOAuthPkceSession(state, state, 'bad'), false);
+  assert.equal(isValidOAuthPkceSession('', '', verifier), false);
+  assert.equal(isValidOAuthPkceSession(undefined, state, verifier), false);
 });
 
 test('generates secure, unpredictable S256 PKCE pairs', () => {
