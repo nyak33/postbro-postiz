@@ -32,7 +32,7 @@ import { AttributionService } from '@gitroom/nestjs-libraries/services/attributi
 import {
   createOAuthPkcePair,
   isGenericOAuthPkceEnabled,
-  isValidOAuthPkceVerifier,
+  isValidOAuthPkceSession,
 } from '@gitroom/backend/services/auth/providers/oauth.pkce';
 
 @ApiTags('Auth')
@@ -392,8 +392,7 @@ export class AuthController {
     const codeVerifier = pkceEnabled ? req?.cookies?.postiz_generic_pkce : undefined;
     if (pkceEnabled && (
       process.env.NOT_SECURED ||
-      typeof state !== 'string' || !state || state !== stateCookie ||
-      !isValidOAuthPkceVerifier(codeVerifier)
+      !isValidOAuthPkceSession(state, stateCookie, codeVerifier)
     )) {
       return response.status(400).json({ error: 'invalid_oauth_session' });
     }
