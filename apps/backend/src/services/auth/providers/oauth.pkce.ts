@@ -25,7 +25,7 @@ export function createOAuthPkcePair(): { verifier: string; challenge: string } {
 
 export function isGenericOAuthPkceEnabled(
   provider: string,
-  env: Pick<NodeJS.ProcessEnv, 'POSTIZ_OAUTH_PKCE_ENABLED'> = process.env
+  env: { POSTIZ_OAUTH_PKCE_ENABLED?: string } = process.env
 ): boolean {
   return provider.toUpperCase() === 'GENERIC' && env.POSTIZ_OAUTH_PKCE_ENABLED === 'true';
 }
