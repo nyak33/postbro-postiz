@@ -18,9 +18,9 @@ test('PKCE is disabled by default, enabled for GENERIC only', () => {
 
 test('validates state, verifier and cookie binding together', () => {
   const verifier = createOAuthPkcePair().verifier;
-  const state = 'login-' + 'a'.repeat(23);
+  const state = 'login-' + 'a'.repeat(16);
   assert.equal(isValidOAuthPkceSession(state, state, verifier), true);
-  assert.equal(isValidOAuthPkceSession(state, 'login-' + 'b'.repeat(23), verifier), false);
+  assert.equal(isValidOAuthPkceSession(state, 'login-' + 'b'.repeat(16), verifier), false);
   assert.equal(isValidOAuthPkceSession(state, state, 'bad'), false);
   assert.equal(isValidOAuthPkceSession('', '', verifier), false);
   assert.equal(isValidOAuthPkceSession(undefined, state, verifier), false);
