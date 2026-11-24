@@ -14,11 +14,31 @@ interface MenuItemInterface {
   hide?: boolean;
   requireBilling?: boolean;
   onClick?: () => void;
+  externalTarget?: '_self' | '_blank';
+}
+
+/**
+ * PostBro launch is never automatically enabled in Postiz builds.
+ * Login and authorization still happen on the destination's own backend.
+ */
+function getPostBroDashboardUrl(): string | null {
+  if (process.env.NEXT_PUBLIC_POSTBRO_SOCIAL_ENABLED !== 'true') return null;
+  const configured = process.env.NEXT_PUBLIC_POSTBRO_SOCIAL_URL;
+  if (!configured) return null;
+  try {
+    const url = new URL(configured);
+    if (url.protocol !== 'https:' || url.username || url.password ||
+        url.search || url.hash || url.origin === 'null') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 export const useMenuItem = () => {
   const { isGeneral } = useVariables();
   const t = useT();
+  const postBroUrl = getPostBroDashboardUrl();
 
   const firstMenu = [
     {
@@ -217,9 +237,25 @@ export const useMenuItem = () => {
     },
   ] satisfies MenuItemInterface[] as MenuItemInterface[];
 
+  const postBroMenu: MenuItemInterface[] = postBroUrl ? [{
+    name: 'PostBro Social',
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="8" height="8" rx="2" />
+        <rect x="13" y="3" width="8" height="8" rx="2" />
+        <rect x="3" y="13" width="8" height="8" rx="2" />
+        <path d="M13 17h8m-4-4v8" />
+      </svg>
+    ),
+    path: postBroUrl,
+    externalTarget: '_self',
+    role: ['ADMIN', 'SUPERADMIN', 'USER'],
+  }] : [];
+
   return {
-    all: [...firstMenu, ...secondMenu],
-    firstMenu,
+    all: [...firstMenu, ...postBroMenu, ...secondMenu],
+    firstMenu: [...firstMenu, ...postBroMenu],
     secondMenu,
   };
 };
@@ -259,6 +295,7 @@ export const TopMenu: FC = () => {
                   icon={item.icon}
                   key={item.name}
                   onClick={item.onClick}
+                  externalTarget={item.externalTarget}
                 />
               ))
         }
@@ -287,6 +324,7 @@ export const TopMenu: FC = () => {
               icon={item.icon}
               key={item.name}
               onClick={item.onClick}
+              externalTarget={item.externalTarget}
             />
           ))}
       </div>
