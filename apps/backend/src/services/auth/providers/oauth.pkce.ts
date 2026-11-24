@@ -10,6 +10,14 @@ export function isValidOAuthPkceVerifier(value: unknown): value is string {
   return typeof value === 'string' && VERIFIER_PATTERN.test(value);
 }
 
+export function isValidOAuthPkceSession(state: unknown, savedState: unknown, verifier: unknown): boolean {
+  return typeof state === 'string' &&
+    state.startsWith('login-') &&
+    state.length > 22 &&
+    state === savedState &&
+    isValidOAuthPkceVerifier(verifier);
+}
+
 export function createOAuthPkcePair(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
