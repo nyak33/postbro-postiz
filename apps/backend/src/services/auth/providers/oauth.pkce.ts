@@ -25,7 +25,7 @@ export function createOAuthPkcePair(): { verifier: string; challenge: string } {
 
 export function isGenericOAuthPkceEnabled(
   provider: string,
-  env: { POSTIZ_OAUTH_PKCE_ENABLED?: string } = process.env
+  flag: string | undefined = process.env.POSTIZ_OAUTH_PKCE_ENABLED
 ): boolean {
-  return provider.toUpperCase() === 'GENERIC' && env.POSTIZ_OAUTH_PKCE_ENABLED === 'true';
+  return provider.toUpperCase() === 'GENERIC' && flag === 'true';
 }
