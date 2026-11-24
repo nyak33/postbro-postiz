@@ -12,8 +12,7 @@ export function isValidOAuthPkceVerifier(value: unknown): value is string {
 
 export function isValidOAuthPkceSession(state: unknown, savedState: unknown, verifier: unknown): boolean {
   return typeof state === 'string' &&
-    state.startsWith('login-') &&
-    state.length > 22 &&
+    /^login-[A-Za-z0-9]{16}$/.test(state) &&
     state === savedState &&
     isValidOAuthPkceVerifier(verifier);
 }
