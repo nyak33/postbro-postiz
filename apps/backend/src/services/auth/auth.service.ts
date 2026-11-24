@@ -328,7 +328,8 @@ export class AuthService {
     redirectUri?: string,
     state?: string,
     stateCookie?: string,
-    addToOrg?: boolean | { orgId: string; role: 'USER' | 'ADMIN'; id: string }
+    addToOrg?: boolean | { orgId: string; role: 'USER' | 'ADMIN'; id: string },
+    codeVerifier?: string
   ) {
     // the mobile app passes redirect_uri and keeps no cookies, the web flow
     // never passes it, so the state nonce is only enforced for the web flow
@@ -341,7 +342,7 @@ export class AuthService {
     }
 
     const providerInstance = this._providerManager.getProvider(provider);
-    const token = await providerInstance.getToken(code, redirectUri);
+    const token = await providerInstance.getToken(code, redirectUri, codeVerifier);
     const user = await providerInstance.getUser(token);
     if (!user) {
       throw new Error('Invalid user');
