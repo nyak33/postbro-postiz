@@ -9,11 +9,11 @@ import {
 } from '../apps/backend/src/services/auth/providers/oauth.pkce.ts';
 
 test('PKCE is disabled by default, enabled for GENERIC only', () => {
-  assert.equal(isGenericOAuthPkceEnabled('GENERIC', {}), false);
-  assert.equal(isGenericOAuthPkceEnabled('GENERIC', { POSTIZ_OAUTH_PKCE_ENABLED: 'false' }), false);
-  assert.equal(isGenericOAuthPkceEnabled('GENERIC', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), true);
-  assert.equal(isGenericOAuthPkceEnabled('GOOGLE', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), false);
-  assert.equal(isGenericOAuthPkceEnabled('LOCAL', { POSTIZ_OAUTH_PKCE_ENABLED: 'true' }), false);
+  assert.equal(isGenericOAuthPkceEnabled('GENERIC', undefined), false);
+  assert.equal(isGenericOAuthPkceEnabled('GENERIC', 'false'), false);
+  assert.equal(isGenericOAuthPkceEnabled('GENERIC', 'true'), true);
+  assert.equal(isGenericOAuthPkceEnabled('GOOGLE', 'true'), false);
+  assert.equal(isGenericOAuthPkceEnabled('LOCAL', 'true'), false);
 });
 
 test('validates state, verifier and cookie binding together', () => {
