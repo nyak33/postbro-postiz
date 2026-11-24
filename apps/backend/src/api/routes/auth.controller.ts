@@ -29,6 +29,11 @@ import { makeSecureId } from '@gitroom/nestjs-libraries/services/make.secure.id'
 import * as Sentry from '@sentry/nestjs';
 import { FarcasterProvider } from '@gitroom/nestjs-libraries/integrations/social/farcaster.provider';
 import { AttributionService } from '@gitroom/nestjs-libraries/services/attribution/attribution.service';
+import {
+  createOAuthPkcePair,
+  isGenericOAuthPkceEnabled,
+  isValidOAuthPkceVerifier,
+} from '@gitroom/backend/services/auth/providers/oauth.pkce';
 
 @ApiTags('Auth')
 @Controller('/auth')
@@ -233,20 +238,35 @@ export class AuthController {
     @Query() query: any,
     @Res({ passthrough: true }) response: Response
   ) {
+    const pkceEnabled = isGenericOAuthPkceEnabled(provider);
+    if (pkceEnabled && process.env.NOT_SECURED) {
+      throw new Error('Generic OAuth PKCE requires secure HTTPS cookies');
+    }
     const state = `login-${makeSecureId(16)}`;
-    response.cookie('oauth_state', state, {
-      domain: getCookieUrlFromDomain(process.env.FRONTEND_URL!),
-      ...(!process.env.NOT_SECURED
-        ? {
-            secure: true,
-            httpOnly: true,
-            sameSite: 'none',
-          }
+    const pkce = pkceEnabled ? createOAuthPkcePair() : null;
+    const stateCookieName = pkceEnabled ? 'postiz_generic_oauth_state' : 'oauth_state';
+    response.cookie(stateCookieName, state, {
+      // PKCE cookies are host-only, never shared with sibling subdomains.
+      ...(!pkceEnabled ? { domain: getCookieUrlFromDomain(process.env.FRONTEND_URL!) } : {}),
+      ...(pkceEnabled || !process.env.NOT_SECURED
+        ? { secure: true, httpOnly: true, sameSite: 'none' as const }
         : {}),
       expires: new Date(Date.now() + 1000 * 60 * 10),
     });
+    if (pkce) {
+      response.cookie('postiz_generic_pkce', pkce.verifier, {
+        secure: true,
+        httpOnly: true,
+        sameSite: 'none',
+        maxAge: 1000 * 60 * 10,
+      });
+    }
 
-    return this._authService.oauthLink(provider, { ...query, state });
+    return this._authService.oauthLink(provider, {
+      ...query,
+      state,
+      ...(pkce ? { codeChallenge: pkce.challenge } : {}),
+    });
   }
 
   @Post('/activate')
@@ -365,14 +385,33 @@ export class AuthController {
       req?.cookies?.org
     );
 
-    const { jwt, token, addedOrg } = await this._authService.checkExists(
-      provider,
-      code,
-      redirect_uri,
-      state,
-      req?.cookies?.oauth_state,
-      getOrgFromCookie
-    );
+    const pkceEnabled = isGenericOAuthPkceEnabled(provider);
+    const stateCookie = pkceEnabled
+      ? req?.cookies?.postiz_generic_oauth_state
+      : req?.cookies?.oauth_state;
+    const codeVerifier = pkceEnabled ? req?.cookies?.postiz_generic_pkce : undefined;
+    if (pkceEnabled && (
+      process.env.NOT_SECURED ||
+      typeof state !== 'string' || !state || state !== stateCookie ||
+      !isValidOAuthPkceVerifier(codeVerifier)
+    )) {
+      return response.status(400).json({ error: 'invalid_oauth_session' });
+    }
+
+    let result: Awaited<ReturnType<AuthService['checkExists']>>;
+    try {
+      result = await this._authService.checkExists(
+        provider, code, redirect_uri, state, stateCookie, getOrgFromCookie, codeVerifier
+      );
+    } finally {
+      if (pkceEnabled) {
+        // The verifier is strictly one attempt: never persist in client JS or logs.
+        const cookieOptions = { secure: true, httpOnly: true, sameSite: 'none' as const };
+        response.clearCookie('postiz_generic_oauth_state', cookieOptions);
+        response.clearCookie('postiz_generic_pkce', cookieOptions);
+      }
+    }
+    const { jwt, token, addedOrg } = result;
 
     if (token) {
       return response.json({ token });
